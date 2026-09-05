@@ -1,136 +1,90 @@
-# VoxTask — App Flutter (MVP)
+# VoxTask — Backend MVP
 
-App móvil del asistente de tareas por voz. Consume el backend FastAPI.
+Asistente de tareas y recordatorios controlado por voz y lenguaje natural.
+Este es el **backend** (FastAPI): el cerebro que interpreta el lenguaje natural
+y expone el contrato JSON que consumirá la app móvil Flutter.
 
-## Concepto visual
+## Qué incluye este MVP
 
-Lienzo azul noche sereno (nunca grita), tipografía amplia, y **un único acento
-menta reservado casi por completo para el micrófono** — el héroe de toda la app.
-La experiencia central es: ABRIR → HABLAR → INTERPRETAR → CONFIRMAR → RECORDAR.
+Cubre los 17 pasos del MVP definido en el diseño, del lado servidor:
 
-## Pantallas
+| # | Paso | Endpoint |
+|---|------|----------|
+| 1 | Crear cuenta | `POST /auth/register` |
+| — | Iniciar sesión | `POST /auth/login` |
+| 5-9 | Interpretar voz→texto con IA (tarea, fecha, hora, categoría, persona, recurrencia) | `POST /nlp/interpret` |
+| + | Búsqueda por voz ("¿qué tengo mañana?") | `POST /nlp/query` |
+| + | Seguimientos condicionales ("si no lo completo, recuérdamelo el viernes") | `POST /tasks/process-followups` |
+| 10-11 | Confirmar y guardar | `POST /tasks` |
+| 12 | Programar recordatorio | (automático al crear) |
+| 14 | Completar tarea | `POST /tasks/{id}/complete` |
+| 15 | Posponer tarea | `POST /tasks/{id}/snooze?minutes=N` |
+| 16 | Consultar tareas de hoy | `GET /tasks/today` |
+| 17 | Consultar próximas | `GET /tasks/upcoming` |
+| — | Vencidas | `GET /tasks/overdue` |
+| — | Eliminar cuenta y datos | `DELETE /auth/me` |
 
-- **Login / Registro** — crear cuenta o entrar.
-- **Home** — saludo según la hora + secciones `Vencidas`, `Hoy`, `Próximas`,
-  cada tarea en una tarjeta con botón de completar. Botón central destacado
-  **🎙 Hablar**. Acceso al historial en la barra superior. Enlace secundario
-  **+ Crear manualmente**. Estado vacío que invita a hablar.
-- **Hoja de voz** (modal) — escuchar → interpretar → confirmar → guardar, con
-  pregunta "¿A qué hora?", respuesta hablada para consultas, y manejo de error
-  sin conexión.
-- **Formulario manual** (crear/editar) — título, detalle, fecha/hora con
-  pickers, prioridad y categoría. También permite eliminar.
-- **Historial** — actividad reciente (creada, editada, completada, pospuesta,
-  seguimientos) en lenguaje natural.
+Los pasos 2-4 (permisos, grabación, captura del micrófono) y 13 (mostrar la
+notificación) viven en la app móvil, no en el backend.
 
-## Estructura
+## Motor de lenguaje natural
 
+`app/services/nlp.py` interpreta español y **resuelve fechas relativas en la
+zona horaria del usuario**. Reconoce, entre otras:
+
+- `mañana`, `hoy`, `pasado mañana`, `esta tarde`, `esta noche`
+- `el próximo viernes`, `el lunes`
+- `dentro de tres horas`, `en quince días`
+- `a las 8`, `a las 3 de la tarde`, `a las 9 de la noche`
+- recurrencia: `todos los lunes`, `cada mes`, `el último viernes de cada mes`
+- categoría sugerida, persona relacionada y prioridad
+
+Devuelve `missing_fields` (p. ej. `["hora"]`) para que la app dispare la
+**pregunta conversacional** ("¿A qué hora?") antes de guardar.
+
+### Seguimientos condicionales
+
+Frases como *"llamar a Juan mañana y si no lo completo, recuérdamelo el viernes"*
+se parten en dos: la tarea (antes de "y si no…") y el seguimiento (la fecha del
+re-recordatorio). Se guarda un `FollowUp` con `check_at`. Al llamar
+`POST /tasks/process-followups` (la app lo hace al abrir, e idealmente un cron en
+el servidor), se evalúa: si la tarea sigue pendiente en esa fecha, se dispara un
+nuevo recordatorio; si ya se completó, el seguimiento se cancela solo.
+
+### Dos modos de interpretación- **Sin API key** (por defecto): parser de reglas determinista, funciona sin
+  internet. Ideal para desarrollo, pruebas y como fallback offline.
+- **Con `ANTHROPIC_API_KEY`**: el gancho en `interpret()` puede llamar al LLM
+  para mayor cobertura. La resolución final de fechas sigue haciéndose en
+  servidor con la zona horaria del usuario.
+
+## Cómo ejecutar
+
+```bash
+pip install -r requirements.txt
+uvicorn app.main:app --reload
 ```
-lib/
-  main.dart                     arranque, permisos, locale es, notificaciones
-  models/task.dart              Task, InterpretResult, QueryResult, Category, HistoryEntry
-  services/
-    api_service.dart            cliente HTTP + JWT (auth, tareas, categorías, historial)
-    voice_service.dart          speech_to_text (voz→texto en el dispositivo)
-    speech_service.dart         flutter_tts (respuestas habladas)
-    notification_service.dart   recordatorios locales + acciones + respuesta por voz
-    date_fmt.dart               fechas naturales en español
-  screens/
-    login_screen.dart
-    home_screen.dart            secciones + micrófono + navegación
-    voice_sheet.dart            EL flujo de voz, confirmación, búsqueda y seguimientos
-    task_form_screen.dart       crear/editar manual
-    history_screen.dart         actividad reciente
-  widgets/task_card.dart
-  theme/app_theme.dart          identidad visual
-android/app/src/main/
-  AndroidManifest.xml           permisos + widget + acciones de notificación
-  kotlin/.../VoxTaskWidgetProvider.kt   widget de pantalla de inicio
-  res/layout|drawable|xml/      recursos del widget
+
+Documentación interactiva en `http://localhost:8000/docs`.
+
+## Probar el flujo completo
+
+```bash
+python test_flow.py
 ```
 
-## Cómo obtener el APK (sin instalar nada)
+Recorre: registro → login → interpretación de 6 frases → guardar → consultar
+hoy/próximas → posponer → completar.
 
-Este proyecto incluye un flujo de **GitHub Actions** que compila el APK en la
-nube. Sigue la guía paso a paso en **`COMO_COMPILAR_APK.md`**: subes el proyecto
-a GitHub, la compilación arranca sola, y descargas el `app-release.apk` listo
-para instalar en tu celular. Toma unos 5–8 minutos y no requiere instalar Flutter.
+## Seguridad
 
-## Cómo ejecutar en desarrollo (con Flutter instalado)
+- Contraseñas con bcrypt.
+- JWT de acceso (30 min) + refresh (30 días).
+- Aislamiento por usuario en cada consulta.
+- Borrado de cuenta con cascada a tareas, categorías y recordatorios.
+- Antes de producción: mover `SECRET_KEY` a variable de entorno, restringir CORS
+  y migrar de SQLite a PostgreSQL (basta cambiar `DATABASE_URL`).
 
-1. Levanta el backend primero (ver el otro proyecto):
-   ```bash
-   uvicorn app.main:app --reload
-   ```
-2. Instala Flutter (3.3+) y las dependencias:
-   ```bash
-   flutter pub get
-   ```
-3. En `lib/services/api_service.dart`, `baseUrl` ya apunta a `10.0.2.2:8000`
-   (host desde el emulador Android). Para un dispositivo físico usa la IP de
-   tu máquina.
-4. Ejecuta:
-   ```bash
-   flutter run
-   ```
+## Siguiente paso
 
-## Permisos
-
-Se piden en contexto al arrancar: **micrófono** (captura de voz) y
-**notificaciones** (recordatorios). El manifiesto ya incluye alarmas exactas y
-arranque tras reinicio para que los recordatorios sean fiables.
-
-## Notas de diseño
-
-- Voz→texto ocurre **en el dispositivo** (rápido y privado); solo la
-  interpretación con IA usa la red.
-- Notificaciones **locales**, no push: los recordatorios ya guardados funcionan
-  sin internet.
-- Si la IA no responde (sin conexión), la hoja de voz degrada con elegancia y
-  ofrece crear la tarea manualmente.
-
-## Búsqueda por voz
-
-El mismo micrófono sirve para **preguntar**, no solo crear. El backend detecta
-si dijiste una tarea o una pregunta. Ejemplos que funcionan:
-
-- "¿Qué tengo hoy?" / "¿Qué tengo para mañana?"
-- "¿Qué tareas tengo esta semana?"
-- "¿Qué cosas tengo pendientes con Juan?"
-- "¿Qué tareas tengo de Formas?"
-- "¿Qué tareas vencidas tengo?"
-
-La app muestra la respuesta y **la lee en voz alta** (flutter_tts), luego lista
-las tareas encontradas y ofrece "Preguntar otra" para seguir la conversación.
-
-## Seguimientos condicionales
-
-Puedes decir *"recuérdame llamar a Juan mañana y si no lo completo,
-recuérdamelo el viernes"*. La tarjeta de confirmación muestra el seguimiento
-("Te insisto el viernes… si no la completas"). Al abrir la app, esta evalúa los
-seguimientos vencidos: si la tarea sigue pendiente, reprograma la notificación.
-
-## Respuesta por voz desde la notificación
-
-La notificación de recordatorio trae tres acciones: **Completar**, **Posponer**
-y **Abrir**. "Posponer" abre un campo de respuesta cuyo teclado incluye el botón
-de dictado del sistema, así el usuario puede **decir** "en 1 hora", "mañana" o
-"esta tarde" y la app calcula el nuevo horario. Completar y posponer se aplican
-directo al backend sin abrir la app.
-
-## Widget de pantalla de inicio
-
-Un widget de Android (`VoxTaskWidgetProvider`) coloca un botón de micrófono en
-la pantalla de inicio. Al tocarlo, abre la app directo en el flujo de voz, sin
-navegar. Los recursos están en `android/app/src/main/res/`. (En iOS se implementa
-después con un App Extension; la lógica Flutter con `home_widget` ya está lista.)
-
-## Estado
-
-MVP completo + búsqueda por voz + seguimientos condicionales + creación/edición
-manual + historial + respuesta por voz en notificación + widget Android.
-
-## Pendiente (fases posteriores)
-
-Widget iOS, sincronización multidispositivo, versión web, integración con Google
-Calendar / Outlook, y API pública.
+App Flutter: pantalla principal (Hoy/Próximas/Vencidas) + botón de micrófono
+que consume `POST /nlp/interpret` y muestra la tarjeta de confirmación editable.

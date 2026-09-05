@@ -1,0 +1,24 @@
+# Render Blueprint. Con este archivo, Render crea de una vez el servicio web
+# y una base de datos PostgreSQL, y los conecta. Ver COMO_DESPLEGAR_BACKEND.md.
+services:
+  - type: web
+    name: voxtask-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app.main:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true # Render genera una clave segura automáticamente
+      - key: DATABASE_URL
+        fromDatabase:
+          name: voxtask-db
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false # lo pones tú en el panel (opcional)
+      - key: CORS_ORIGINS
+        value: "*"
+
+databases:
+  - name: voxtask-db
+    plan: free

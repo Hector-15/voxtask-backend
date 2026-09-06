@@ -9,5 +9,5 @@ python-jose==3.5.0
 python-multipart==0.0.32
 SQLAlchemy==2.0.52
 uvicorn==0.52.4
-psycopg2-binary==2.9.9
+psycopg[binary]==3.2.3
 gunicorn==23.0.0
